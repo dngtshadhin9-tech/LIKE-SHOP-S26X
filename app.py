@@ -98,24 +98,53 @@ def load_accounts(server_name):
         print(f"[-] Error loading accounts: {e}")
         return []
 
+JWT_API_BASE = "https://s26x-jwt.vercel.app"
+JWT_API_ENDPOINT = "/multi_token"
+
+def _extract_token(data):
+    """Response er moddhe jwt token khuje ber kore (nested hole o)"""
+    if isinstance(data, str):
+        return data if len(data) > 20 else None
+    if isinstance(data, list):
+        for item in data:
+            t = _extract_token(item)
+            if t:
+                return t
+        return None
+    if isinstance(data, dict):
+        for key in ("jwt_token", "token", "JWT", "access_token"):
+            value = data.get(key)
+            if isinstance(value, str) and value:
+                return value
+        for value in data.values():
+            if isinstance(value, (dict, list)):
+                t = _extract_token(value)
+                if t:
+                    return t
+    return None
+
 async def generate_jwt_token(uid, password):
-    """Generate JWT token"""
+    """Generate JWT token from s26x-jwt /multi_token API"""
     try:
         encoded_password = urllib.parse.quote(password)
-        url = f"https://all-in-one-jwt.vercel.app/token?uid={uid}&password={encoded_password}"
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=60) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    
-                    if isinstance(data, dict):
-                        if 'jwt_token' in data:
-                            return data['jwt_token']
-                        elif 'token' in data:
-                            return data['token']
-                return None
-    except:
+        url = f"{JWT_API_BASE}{JWT_API_ENDPOINT}?uid={uid}&password={encoded_password}"
+
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    print(f"[!] JWT API HTTP {response.status} for UID: {uid}")
+                    return None
+                try:
+                    data = await response.json(content_type=None)
+                except Exception:
+                    data = await response.text()
+                token = _extract_token(data)
+                if not token:
+                    print(f"[-] Token not found in JWT API response for UID: {uid}")
+                return token
+    except Exception as e:
+        print(f"[-] generate_jwt_token exception for UID {uid}: {e}")
         return None
 
 def encrypt_message(plaintext):
